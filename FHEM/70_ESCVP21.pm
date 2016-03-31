@@ -1,7 +1,7 @@
 ##############################################
 #
 # A module to control Epson projectors via ESC/VP21
-# 
+#
 # written 2013 by Henryk Ploetz <henryk at ploetzli.ch>
 #
 # The information is based on epson322270eu.pdf and later epson373739eu.pdf
@@ -15,6 +15,9 @@
 #           (For consistent naming, look into /dev/serial/by-id/ )
 #           Optionally can specify the baud rate, e.g. /dev/ttyUSB0@9600
 #   model - Specify the model of your projector, e.g. tw3000 (case insensitive)
+#
+#	15.01.15	Add new Models for Input: EH-TW5900 / EH-TW6000 / EH-TW6000W
+#	23.01.15	Add Readings: serial number / Luminance (00:Normal-30:Auto-40:Full-50:Zoom-70:Wide) / Aspect (00:Normal-01:Eco)
 
 
 package main;
@@ -41,6 +44,9 @@ my @ESCVP21_SOURCES = (
   ['2f', "auto2"],
   ['30', "cycle3"],
   ['31', "digital-rgb3"],
+  ['33', "rgb-video3"],
+  ['34', "ycbcr3"],
+  ['35', "ypbpr3"],
   ['c0', "cycle5"],
   ['c3', "scart5"],
   ['c4', "ycbcr5"],
@@ -51,7 +57,17 @@ my @ESCVP21_SOURCES = (
   ['42', "video-s4"],
   ['43', "video-ycbcr4"],
   ['44', "video-ypbpr4"],
+  ['52', "usb-easymp"],
   ['a0', "hdmi2"],
+  ['a1', "digital-rgb-hdmi"],
+  ['a3', "rgb-video-hdmi"],
+  ['a4', "ycbcr-hdmi"],
+  ['a5', "ypbpr-hdmi"],
+  ['d0', "wirelesshd"],
+  ['d1', "digital-rgb-hdmi-2"],
+  ['d3', "rgb-video-hdmi-2"],
+  ['d4', "ycbcr-hdmi-2"],
+  ['d5', "ypbpr-hdmi-2"],
 );
 
 my @ESCVP21_SOURCES_OVERRIDE = (
@@ -71,7 +87,20 @@ my @ESCVP21_SOURCES_OVERRIDE = (
       ['30', "hdmi1"],
     ]
   ],
-);
+  ['tw(5900|6000|6000w)', [
+      ['10', "component-cycle"],
+      ['14', "component-ycbcr"],
+      ['15', "component-ypbpr"],
+      ['1f', "component-auto"],
+      ['20', "pc-cycle"],
+      ['21', "pc-analog-rgb"],
+      ['30', "hdmi1"],
+      ['40', "video-cycle"],
+      ['41', "video-rca"],
+    ]
+  ],
+
+ );
 
 my @ESCVP21_SOURCES_AVAILABLE = (
   ['tw100h?', ['10', '11', '20', '21', '23', '24', '31', '40', '41', '42', '43', '44']],
@@ -84,6 +113,27 @@ my @ESCVP21_SOURCES_AVAILABLE = (
   ['tw2000', ['10', '14', '15', '1f', '20', '21', '30', 'a0', '40', '41', '42']],
   ['tw[345]000', ['10', '14', '15', '1f', '20', '21', '30', 'a0', '40', '41', '42']],
   ['tw420', ['10', '11', '14', '1f', '30', '41', '42']],
+  ['tw(5900|6000|6000w)', ['10', '14', '15', '1f', '20', '21', '30', '31', '33', '34', '35', '40', '41', '52', 'a0', 'a1', 'a3', 'a4', 'a5', 'd0', 'd1', 'd3', 'd4', 'd5']],
+);
+
+my @ESCVP21_REMOTE = (
+  ['03', "Menü"],
+  ['05', "ESC"],
+  ['14', "Auto"],
+  ['16', "Enter"],
+  ['35', "UP"],
+  ['36', "Down"],
+  ['37', "Left"],
+  ['38', "Right"],
+  ['48', "Source"],
+);
+
+my @ESCVP21_REMOTE_OVERRIDE = (
+  # From documentation
+ );
+
+my @ESCVP21_REMOTE_AVAILABLE = (
+  ['tw(5900|6000|6000w)', ['03', '05', '14', '16', '35', '36', '37', '38', '48']],
 );
 
 sub ESCVP21_Initialize($$)
@@ -151,17 +201,17 @@ sub ESCVP21_Ready($)
   return ($InBytes && $InBytes>0);
 }
 
-sub ESCVP21_Undefine($$) 
+sub ESCVP21_Undefine($$)
 {
   my ($hash,$arg) = @_;
   my $name = $hash->{NAME};
   RemoveInternalTimer("watchdog:".$name);
   RemoveInternalTimer("getStatus:".$name);
-  DevIo_CloseDev($hash); 
+  DevIo_CloseDev($hash);
   return undef;
 }
 
-sub ESCVP21_Init($) 
+sub ESCVP21_Init($)
 {
   my ($hash) = @_;
   my $time = gettimeofday();
@@ -205,11 +255,11 @@ sub ESCVP21_Watchdog($)
   my($in) = shift;
   my(undef,$name) = split(':',$in);
   my $hash = $defs{$name};
-  
+ 
   Log 3, "ESCVP21_Watchdog: called for command '$hash->{ActiveCommand}', resetting communication";
-  
+ 
   ESCVP21_Queue($hash, $hash->{ActiveCommand}, 1) unless $hash->{ActiveCommand} =~ /^init/;
-  
+ 
   my $command_queue_saved = $hash->{CommandQueue};
   ESCVP21_Init($hash);
   $hash->{CommandQueue} = $command_queue_saved;
@@ -269,7 +319,7 @@ sub ESCVP21_Read($)
     }
 
     ESCVP21_ArmWatchdog($hash);
-  
+ 
     ($line, $buffer) = ESCVP21_Parse($buffer);
   }
 
@@ -281,7 +331,7 @@ sub ESCVP21_Parse($@)
 {
   my $msg = undef;
   my ($tail) = @_;
-  
+ 
   if($tail =~ /^(.*?)(:|\x0d)(.*)$/s) {
     if($2 eq ":") {
       $msg = $1 . $2;
@@ -303,7 +353,7 @@ sub ESCVP21_GetStatus($)
   Log 5, "ESCVP21_GetStatus called for $name";
 
   RemoveInternalTimer("getStatus:".$name);
-  
+ 
   # Only queue commands when the queue is empty, otherwise, try again in a few seconds
   if(!$hash->{CommandQueue}) {
     InternalTimer(gettimeofday()+$hash->{Timer}, "ESCVP21_GetStatus_t", "getStatus:".$name, 0);
@@ -315,6 +365,10 @@ sub ESCVP21_GetStatus($)
     ESCVP21_QueueGet($hash,"MUTE");
     ESCVP21_QueueGet($hash,"LAMP");
     ESCVP21_QueueGet($hash,"ERR");
+    ESCVP21_QueueGet($hash,"SNO");
+    ESCVP21_QueueGet($hash,"ASPECT");
+    ESCVP21_QueueGet($hash,"LUMINANCE");
+
   } else {
     InternalTimer(gettimeofday()+5, "ESCVP21_GetStatus_t", "getStatus:".$name, 0);
   }
@@ -397,7 +451,7 @@ sub ESCVP21_Set($@)
     push @inputs, $table{$_} foreach (sort keys %table);
     return "Unknown argument ?, choose one of on off mute input:" . join(",",@inputs);
   }
-  
+ 
   if($do_mute) {
     ESCVP21_Queue($hash,"muteOn");
     ESCVP21_QueueGet($hash,"MUTE");
@@ -452,7 +506,7 @@ sub ESCVP21_Queue($@)
   } else {
     $hash->{CommandQueue} = $cmd
   }
-  
+ 
   ESCVP21_IssueQueuedCommand($hash);
   ESCVP21_ArmWatchdog($hash);
 }
@@ -551,7 +605,7 @@ sub ESCVP21_SourceTable($)
       last;
     }
   }
-  
+ 
   foreach (@ESCVP21_SOURCES) {
     my ($code, $name) = @$_;
     if( (!@available) || ($code ~~ @available)) {
@@ -571,7 +625,52 @@ sub ESCVP21_SourceTable($)
   return %table;
 }
 
-sub ESCVP21_Command($$) 
+sub ESCVP21_RemoteTable($)
+{
+  my ($hash) = @_;
+  my %table = ();
+  my @available;
+  my @override;
+
+  foreach (@ESCVP21_REMOTE_AVAILABLE) {
+    my ($modelre, $available_list) = @$_;
+    if( $hash->{Model} =~ /^$modelre$/i ) {
+      Log 4, "ESCVP21: Available Remote keys defined by " . $modelre;
+      @available = @$available_list;
+      last;
+    }
+  }
+
+  foreach (@ESCVP21_REMOTE_OVERRIDE) {
+    my ($modelre, $override_list) = @$_;
+    if( $hash->{Model} =~ /^$modelre$/i ) {
+      Log 4, "ESCVP21: Override defined by " . $modelre;
+      @override = @$override_list;
+      last;
+    }
+  }
+ 
+  foreach (@ESCVP21_REMOTE) {
+    my ($code, $name) = @$_;
+    if( (!@available) || ($code ~~ @available)) {
+      $table{lc($code)} = lc($name);
+      if(@override) {
+	foreach (@override) {
+	  my ($code_o, $name_o) = @$_;
+	  if(lc($code_o) eq lc($code)) {
+	    $table{lc($code)} = lc($name_o);
+	  }
+	}
+      }
+      Log 4, "ESCVP21: " . $code . " is mapped to " . $table{lc($code)};
+    }
+  }
+
+  return %table;
+}
+
+
+sub ESCVP21_Command($$)
 {
   my ($hash,$command) = @_;
   DevIo_SimpleWrite($hash,$command."\x0d",'');
@@ -688,7 +787,7 @@ sub ESCVP21_Command($$)
 <ul>
 
   Viele EPSON-Projektoren sind mit einem Anschluss f&uuml;r die Fernbedienung von einem
-  Computer ausgestattet. Das ist entweder ein serieller Anschluss (RS-232), ein 
+  Computer ausgestattet. Das ist entweder ein serieller Anschluss (RS-232), ein
   USB-Anschluss, oder ein Ethernet-Anschluss. Das verwendete Protokoll ist h&auml;ufig
   ESC/VP21. Dieses Modul unterst&uuml;tzt grundlegende Steuerungsfunktionen des Projektors
   &uuml;ber ESC/VP21 f&uuml;r Projektoren mit USB- (ungestet) und RS/232-Anschluss. Das
@@ -710,7 +809,7 @@ sub ESCVP21_Command($$)
       dem dmesg-Befehl anzusehen), nachdem das USB-Kabel verbunden wurde. Viele
       Distributionen bieten ausserdem ein konsistentes Namensschema (&uuml;ber symlinks)
       in /dev/serial/by-id/ an.<br><br>
-      
+     
       Zus&auml;tzlich kann eine Baudrate angegeben werden, durch Verwendung des @-Zeichens
       in der device-Angabe, z.B. /dev/ttyACM0@9600. Das sollte allerdings eigentlich
       immer 9600 sein.<br><br>
@@ -751,7 +850,7 @@ sub ESCVP21_Command($$)
   <a name="ESCVP21set"></a>
   <b>Set </b>
   <ul>
-    <li>on<br>
+    <li>on1<br>
 	Schaltet den Projektor an.
 	</li><br>
     <li>off<br>
