@@ -22,7 +22,7 @@ package main;
 use strict;
 use warnings;
 use POSIX;
-use DevIo;
+##use DevIo;
 
 my @ESCVP21_SOURCES = (
   ['10', "cycle1"],
@@ -89,12 +89,15 @@ my @ESCVP21_SOURCES_AVAILABLE = (
 sub ESCVP21_Initialize($$)
 {
   my ($hash) = @_;
+
+  require "$attr{global}{modpath}/FHEM/DevIo.pm";
+
   $hash->{DefFn}    = "ESCVP21_Define";
   $hash->{SetFn}    = "ESCVP21_Set";
   $hash->{ReadFn}   = "ESCVP21_Read";  
   $hash->{ReadyFn}  = "ESCVP21_Ready";
   $hash->{UndefFn}  = "ESCVP21_Undefine";
-  $hash->{AttrList} = "TIMER";  # FIXME, are these needed or are they implicit? "event-on-update-reading event-on-change-reading stateFormat webCmd devStateIcon"
+  $hash->{AttrList} = "TIMER" . $readingFnAttributes; # "event-on-update-reading event-on-change-reading stateFormat webCmd devStateIcon"
   $hash->{fhem}{interfaces} = "switch_passive;switch_active";
   
 }
@@ -102,11 +105,12 @@ sub ESCVP21_Initialize($$)
 sub ESCVP21_Define($$)
 {
   my ($hash, $def) = @_;
-  DevIo_CloseDev($hash);
+  ##DevIo_CloseDev($hash);
   my @args = split("[ \t]+", $def);
   if (int(@args) < 2) {
     return "Invalid number of arguments: define <name> ESCVP21 <port> [<model> [<timer>]]";
   }
+  DevIo_CloseDev($hash);
 
   my ($name, $type, $port, $model, $timer) = @args;
   $model = "unknown" unless defined $model;
@@ -127,13 +131,24 @@ sub ESCVP21_Define($$)
   my $baudrate;
   ($dev, $baudrate) = split("@", $port);
   $readyfnlist{"$name.$dev"} = $hash;
-  return undef;
+
+  my $ret = DevIo_OpenDev($hash, 0, "ESCVP21_Init");
+  return $ret;
 }
 
 sub ESCVP21_Ready($)
 {
   my ($hash) = @_;
-  return DevIo_OpenDev($hash, 0, "ESCVP21_Init");
+  return DevIo_OpenDev($hash, 0, "ESCVP21_Init")
+    if ($hash->{STATE} eq "disconnected");
+
+  # This is relevant for windows/USB only (seen in 34_panStamp.pm on 19.08.2014)
+  my $po = $hash->{USBDev};
+  my ($BlockingFlags, $InBytes, $OutBytes, $ErrorFlags);
+  if($po) {
+    ($BlockingFlags, $InBytes, $OutBytes, $ErrorFlags) = $po->status;
+  }
+  return ($InBytes && $InBytes>0);
 }
 
 sub ESCVP21_Undefine($$) 
@@ -451,7 +466,7 @@ sub ESCVP21_IssueQueuedCommand($)
     return;
   }
   return unless defined $hash->{CommandQueue};
-  
+
   ($hash->{ActiveCommand}, $hash->{CommandQueue}) = split(/\|/, $hash->{CommandQueue}, 2);
 
   if($hash->{ActiveCommand}) {
