@@ -450,6 +450,7 @@ sub ESCVP21_IssueQueuedCommand($)
   if($hash->{ActiveCommand}) {
     return;
   }
+  return unless defined $hash->{CommandQueue};
   
   ($hash->{ActiveCommand}, $hash->{CommandQueue}) = split(/\|/, $hash->{CommandQueue}, 2);
 
