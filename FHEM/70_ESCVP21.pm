@@ -8,6 +8,8 @@
 # Some details from pl600pcm.pdf were used, but this enhanced support is not
 # complete.
 #
+# Extended 2016 by Andy Thaller according to epson375633eu.xlsx
+#
 ##############################################
 # Definition: define <name> ESCVP21 <port> [<model>]
 # Parameters:
@@ -83,7 +85,7 @@ my @ESCVP21_SOURCES_OVERRIDE = (
     ]
   ],
   # From experience
-  ['tw3000', [
+  ['tw[05]00', [
       ['30', "hdmi1"],
     ]
   ],
@@ -111,7 +113,7 @@ my @ESCVP21_SOURCES_AVAILABLE = (
   ['tw20', ['10', '13', '14', '15', '20', '21', '40', '41', '42']],
   ['tw(600|520|550|800|700|1000)', ['10', '14', '15', '1f', '20', '21', '30', 'c0', 'c3', 'c4', 'c5', 'cf', '40', '41', '42']],
   ['tw2000', ['10', '14', '15', '1f', '20', '21', '30', 'a0', '40', '41', '42']],
-  ['tw[345]000', ['10', '14', '15', '1f', '20', '21', '30', 'a0', '40', '41', '42']],
+  ['tw([345]000|3500)', ['10', '14', '15', '1f', '20', '21', '30', 'a0', '40', '41', '42']],
   ['tw420', ['10', '11', '14', '1f', '30', '41', '42']],
   ['tw(5900|6000|6000w)', ['10', '14', '15', '1f', '20', '21', '30', '31', '33', '34', '35', '40', '41', '52', 'a0', 'a1', 'a3', 'a4', 'a5', 'd0', 'd1', 'd3', 'd4', 'd5']],
 );
@@ -134,6 +136,50 @@ my @ESCVP21_REMOTE_OVERRIDE = (
 
 my @ESCVP21_REMOTE_AVAILABLE = (
   ['tw(5900|6000|6000w)', ['03', '05', '14', '16', '35', '36', '37', '38', '48']],
+);
+
+# see epson375633eu.xlsx
+my %ESCVP21_ERROR_COCES = (
+  '00' => 'There is no error or the error is recovered',
+  '01' => 'Fan error',
+  '03' => 'Lamp failure at power on',
+  '04' => 'High internal temperature error',
+  '06' => 'Lamp error',
+  '07' => 'Open Lamp cover door error',
+  '08' => 'Cinema filter error',
+  '09' => 'Electric dual-layered capacitor is disconnected',
+  '0A' => 'Auto iris error',
+  '0B' => 'Subsystem Error',
+  '0C' => 'Low air flow error',
+  '0D' => 'Air filter air flow sensor error',
+  '0E' => 'Power supply unit error (Ballast)',
+  '0F' => 'Shutter error',
+  '10' => 'Cooling system error (peltier element)',
+  '11' => 'Cooling system error (Pump)',
+  '12' => 'Static iris error',
+  '13' => 'Power supply unit error (Disagreement of Ballast)',
+  '14' => 'Exhaust shutter error',
+  '15' => 'Obstacle detection error',
+  '16' => 'IF board discernment error',
+);
+
+# see epson375633eu.xlsx
+#
+# Projector executes commands normally while a warning indicator 
+# such as a high temperature warning is on.
+# Projector does not execute commands nor return a colon when the 
+# projector is in an abnormal state such as a lamp failure and 
+# abnormal high temperature.
+#
+# When an abnormal state is continued for 130 seconds after,
+# PWR ON command becomes possible.
+#
+my %ESCVP21_STATUS_COCES = (
+  '00' => 'Standy',
+  '01' => 'Lamp On',
+  '02' => 'Warmup',
+  '03' => 'Cooldown',
+  '05' => 'Abnormality standby',
 );
 
 sub ESCVP21_Initialize($$)
@@ -256,7 +302,7 @@ sub ESCVP21_Watchdog($)
   my(undef,$name) = split(':',$in);
   my $hash = $defs{$name};
  
-  Log 3, "ESCVP21_Watchdog: called for command '$hash->{ActiveCommand}', resetting communication";
+  Log 4, "ESCVP21_Watchdog: called for command '$hash->{ActiveCommand}', resetting communication";
  
   ESCVP21_Queue($hash, $hash->{ActiveCommand}, 1) unless $hash->{ActiveCommand} =~ /^init/;
  
